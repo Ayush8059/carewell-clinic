@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: carewell-${COLOR}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: carewell-bg, color: ${COLOR} }
+  template:
+    metadata:
+      labels: { app: carewell-bg, color: ${COLOR} }
+    spec:
+      containers:
+      - name: carewell
+        image: ${APP_IMAGE}
+        env:
+        - { name: APP_COLOR, value: "${COLOR}" }
+        - { name: APP_VERSION, value: "${APP_TAG}" }
+        ports: [{ containerPort: 3000 }]
+        readinessProbe:
+          httpGet: { path: /health, port: 3000 }

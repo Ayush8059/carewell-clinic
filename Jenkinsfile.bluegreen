@@ -1,0 +1,47 @@
+pipeline {
+  agent any
+  environment {
+    IMAGE = "ayush805900/carewell"
+    TAG   = "bg-${BUILD_NUMBER}"
+  }
+  stages {
+    stage('Build & Push Image') {
+      steps {
+        sh 'docker build -t $IMAGE:$TAG .'
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'U', passwordVariable: 'P')]) {
+          sh 'echo $P | docker login -u $U --password-stdin && docker push $IMAGE:$TAG'
+        }
+      }
+    }
+    stage('Detect Live Color') {
+      steps {
+        script {
+          env.LIVE = sh(script: "kubectl get svc carewell-bg-svc -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo none", returnStdout: true).trim()
+          env.IDLE = (env.LIVE == 'blue') ? 'green' : 'blue'
+          echo "LIVE=${env.LIVE}  ->  deploying new version to IDLE=${env.IDLE}"
+        }
+      }
+    }
+    stage('Deploy to Idle Color') {
+      steps {
+        sh '''
+          export COLOR=$IDLE APP_IMAGE=$IMAGE:$TAG APP_TAG=$TAG
+          envsubst < k8s-bg/deploy.yaml | kubectl apply -f -
+          kubectl rollout status deployment/carewell-$IDLE --timeout=300s
+        '''
+      }
+    }
+    stage('Smoke Test Idle') {
+      steps { sh 'kubectl exec deploy/carewell-$IDLE -- wget -qO- http://localhost:3000/health' }
+    }
+    stage('Switch Traffic') {
+      steps {
+        sh '''
+          export COLOR=$IDLE
+          envsubst < k8s-bg/service.yaml | kubectl apply -f -
+        '''
+        echo "Traffic switched to ${env.IDLE}. Old ${env.LIVE} kept for instant rollback."
+      }
+    }
+  }
+}
