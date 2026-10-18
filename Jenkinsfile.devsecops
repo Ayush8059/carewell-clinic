@@ -1,0 +1,45 @@
+pipeline {
+  agent any
+  environment {
+    IMAGE = "ayush805900/carewell"
+    TAG   = "sec-${BUILD_NUMBER}"
+  }
+  stages {
+    stage('Secret Scan - Gitleaks') {
+      steps { sh 'docker run --rm -v $PWD:/repo zricethezav/gitleaks:latest detect --source /repo --no-git -v' }
+    }
+    stage('Dependency Scan - npm audit') {
+      steps { sh 'docker run --rm -u $(id -u):$(id -g) -e npm_config_cache=/tmp/.npm -v $PWD:/app -w /app node:20-alpine sh -c "npm install --package-lock-only && npm audit --audit-level=critical"' }
+    }
+    stage('Dockerfile Lint - Hadolint') {
+      steps { sh 'docker run --rm -i -e HADOLINT_FAILURE_THRESHOLD=error hadolint/hadolint < Dockerfile' }
+    }
+    stage('Build Image') {
+      steps { sh 'docker build -t $IMAGE:$TAG .' }
+    }
+    stage('Image Scan - Trivy') {
+      steps {
+        sh 'trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed -o trivy-report.txt $IMAGE:$TAG'
+        sh 'cat trivy-report.txt'
+        sh 'trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 $IMAGE:$TAG'
+      }
+    }
+    stage('Push Image') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'U', passwordVariable: 'P')]) {
+          sh 'echo $P | docker login -u $U --password-stdin && docker push $IMAGE:$TAG'
+        }
+      }
+    }
+    stage('Secure Deploy') {
+      steps {
+        sh 'sed -i "s|:IMAGE_TAG|:$TAG|" k8s-sec/deployment.yaml'
+        sh 'kubectl apply -f k8s-sec/'
+        sh 'kubectl rollout status deployment/carewell-secure --timeout=300s'
+      }
+    }
+  }
+  post {
+    always { archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true }
+  }
+}
