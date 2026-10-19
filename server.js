@@ -18,3 +18,4 @@ app.get('/api/doctors', (req, res) => res.json([
 ]));
 
 app.listen(3000, '0.0.0.0', () => console.log('CareWell running on 3000'));
+const apiKey = "k8Jd93LmQ2pR7vZ1nB4xW6tY0cH5sA";
